@@ -3,8 +3,7 @@ echo ===================================================
 echo Starting MarketMentor Grid Search Optimizer
 echo ===================================================
 
-:: Always run from the folder this batch file lives in
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 where python >nul 2>nul
 if %errorlevel% neq 0 (

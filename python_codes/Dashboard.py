@@ -1,5 +1,8 @@
 import os
 import sqlite3
+import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -7,10 +10,12 @@ import plotly.express as px
 import streamlit as st
 
 # All outputs live in ./results (anchored to this file, so it works from any folder / OS)
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 DB_PATH = RESULTS_DIR / "market_data.db"
 BACKTEST_PATH = RESULTS_DIR / "Backtest_Report.xlsx"
 OPT_PATH = RESULTS_DIR / "Optimization.xlsx"
+SCREENER_PATH = Path(__file__).resolve().parent / "Screeners.py"
+IS_CLOUD = Path("/mount/src").exists()   # best-effort check for Streamlit Cloud
 
 # Configure the web page
 st.set_page_config(page_title="MarketMentor Quant Engine", page_icon="📈", layout="wide")
@@ -23,6 +28,22 @@ tab1, tab2, tab3 = st.tabs(["📊 Live Screener", "📉 Backtest Analytics", "�
 # --- TAB 1: SCREENER ---
 with tab1:
     st.header("Today's Actionable Setups")
+    if os.path.exists(DB_PATH):
+        updated = datetime.fromtimestamp(DB_PATH.stat().st_mtime)
+        st.caption(f"Last updated: {updated.strftime('%d %b %Y, %I:%M %p')}")
+
+    if not IS_CLOUD:
+        if st.button("🔄 Refresh live screener"):
+            with st.spinner("Fetching 50 stocks from Yahoo Finance... (1-2 minutes)"):
+                run = subprocess.run(
+                    [sys.executable, str(SCREENER_PATH)],
+                    capture_output=True, text=True, timeout=600,
+                )
+            if run.returncode == 0:
+                st.rerun()
+            else:
+                st.error("Refresh failed. Check your internet connection and try again.")
+                st.code((run.stdout + run.stderr)[-1500:])
     if os.path.exists(DB_PATH):
         conn = sqlite3.connect(DB_PATH)
         df_screener = pd.read_sql_query("SELECT * FROM screener_history", conn)

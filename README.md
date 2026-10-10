@@ -62,11 +62,11 @@ AlgoEdge/
 │   ├── strategy_config.py   # single source of truth: RSI rules, SL/TP, costs, dates, paths
 │   ├── Screeners.py
 │   ├── Backtester.py
-│   └── Optimeser.py
+│   ├── Optimeser.py
+│   └── Dashboard.py
 ├── results/                 # auto-generated: market_data.db + .xlsx reports
-├── Dashboard.py
-├── run_pipeline.bat / .sh
-├── run_optimizer.bat / .sh
+├── windows/                 # run_pipeline.bat, run_optimizer.bat
+├── mac_linux/               # run_pipeline.sh, run_optimizer.sh
 └── requirements.txt
 ```
 
@@ -79,12 +79,12 @@ AlgoEdge/
    pip install -r requirements.txt
    ```
 2. **Run the pipeline** (screener first, then backtester; outputs go to `results/`):
-   * Windows: double-click `run_pipeline.bat`
-   * Mac/Linux: `./run_pipeline.sh` (run `chmod +x *.sh` once)
-3. **(Optional) Run the optimizer:** `run_optimizer.bat` / `./run_optimizer.sh`
+   * Windows: double-click `windows\run_pipeline.bat`
+   * Mac/Linux: `./mac_linux/run_pipeline.sh` (run `chmod +x mac_linux/*.sh` once)
+3. **(Optional) Run the optimizer:** `windows\run_optimizer.bat` / `./mac_linux/run_optimizer.sh`
 4. **Open the dashboard:**
    ```bash
-   streamlit run Dashboard.py
+   streamlit run python_codes/Dashboard.py
    ```
 
 The screener must run before the backtester/optimizer, because they read their ticker list from `results/market_data.db`. To change the strategy, edit `python_codes/strategy_config.py`.

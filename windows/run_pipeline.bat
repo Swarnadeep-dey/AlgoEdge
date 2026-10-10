@@ -4,7 +4,7 @@ echo Starting MarketMentor Quantitative Pipeline
 echo ===================================================
 
 :: Always run from the folder this batch file lives in
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 where python >nul 2>nul
 if %errorlevel% neq 0 (
@@ -35,4 +35,12 @@ echo.
 echo ===================================================
 echo Pipeline Complete! Reports saved in the results folder.
 echo ===================================================
+pause
+
+echo.
+echo Opening the dashboard in your browser... (press Ctrl+C here to stop it)
+python -m streamlit run python_codes\Dashboard.py
+if %errorlevel% neq 0 (
+    echo [ERROR] Could not start the dashboard. Run: pip install -r requirements.txt
+)
 pause
