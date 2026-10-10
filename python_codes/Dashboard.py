@@ -55,6 +55,7 @@ with tab1:
             use_container_width=True,
             hide_index=True
         )
+        st.caption("Signal Strength (0-3) counts how many conditions hold: price above 20-day SMA, RSI below 25, MACD above its signal line. The backtest enters on the RSI condition only.")   # <-- here
     else:
         st.warning("Database not found. Please run your Screener batch file.")
 
@@ -65,24 +66,38 @@ with tab2:
         df_metrics = pd.read_excel(BACKTEST_PATH, sheet_name="Executive Summary")
         df_equity = pd.read_excel(BACKTEST_PATH, sheet_name="Equity Curve")
         df_trades = pd.read_excel(BACKTEST_PATH, sheet_name="Trade Log")
+        try:
+            df_bench = pd.read_excel(BACKTEST_PATH, sheet_name="Benchmark")
+            df_equity = df_equity.merge(df_bench[["Date", "Benchmark Equity"]], on="Date", how="left").ffill()
+        except ValueError:
+            pass
         
         # 1. Executive Summary Metric Cards
-        cols = st.columns(5)
-        for idx, row in df_metrics.iterrows():
-            col_idx = idx % 5
-            cols[col_idx].metric(label=row['Metric'], value=row['Value'])
+        groups = {
+            "Returns": ["Initial Capital", "Final Portfolio Value", "CAGR (%)"],
+            "Risk": ["Annualized Volatility (%)", "Max Drawdown (%)", "Sharpe Ratio (Rf=5%)", "Sortino Ratio"],
+            "Trades & Benchmark": ["Profit Factor", "Strategy Beta", "Strategy Alpha (Annualized)"],
+        }
+        m = dict(zip(df_metrics['Metric'], df_metrics['Value']))
+        for title, names in groups.items():
+            st.subheader(title)
+            for col, n in zip(st.columns(len(names)), names):
+                col.metric(n, m.get(n, "n/a"))
             
         st.divider()
         
         # 2. Interactive Equity Curve Chart
         st.subheader("Portfolio Growth")
         fig_eq = px.line(
-            df_equity, x='Date', y='Portfolio Equity', 
+            df_equity, x='Date', y=[c for c in ['Portfolio Equity', 'Benchmark Equity'] if c in df_equity.columns], 
             title="Equity Curve vs Time",
             template="plotly_dark", line_shape="spline"
         )
-        fig_eq.update_traces(line_color='#1F4E78', line_width=3)
+        fig_eq.data[0].update(line_color='#4C9BE8', line_width=3)
         st.plotly_chart(fig_eq, use_container_width=True)
+        df_equity['Drawdown (%)'] = (df_equity['Portfolio Equity'] / df_equity['Portfolio Equity'].cummax() - 1) * 100
+        st.plotly_chart(px.area(df_equity, x='Date', y='Drawdown (%)', title='Drawdown', template='plotly_dark'),
+                        use_container_width=True)
         
         # 3. Trade Log
         st.subheader("Execution Log")
@@ -100,11 +115,11 @@ with tab3:
         xls = pd.ExcelFile(opt_file)
         df_opt = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
         
-        st.markdown("Grid search over Stop-Loss and Take-Profit pairs, replaying the exact backtester rules on the same NIFTY 50 window.")
+        st.markdown("Grid search runs on 2024 data only. The Backtest tab then tests the chosen pair on 2025, which the search never saw.")
         
         # Display the ranked heatmap
         st.dataframe(
-            df_opt.style.background_gradient(cmap="RdYlGn", subset=["Profit Factor", "Total Return (%)", "Win Rate (%)"]),
+            df_opt.style.background_gradient(cmap="RdYlGn", subset=["Profit Factor", "Sum of Trade Returns (%)", "Win Rate (%)"]),
             use_container_width=True,
             hide_index=True
         )

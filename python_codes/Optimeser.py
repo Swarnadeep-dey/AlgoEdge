@@ -10,12 +10,12 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from strategy_config import (
     COMMISSION_RATE,
-    END_DATE,
     ENTRY_RSI,
     EXIT_RSI,
     RESULTS_DIR,
     RSI_PERIOD,
-    START_DATE,
+    TRAIN_END,
+    TRAIN_START,
 )
 
 # Suppress pandas future warnings for clean output
@@ -143,7 +143,7 @@ def export_advanced_excel(df, filename=RESULTS_DIR / "Optimization.xlsx"):
         # Apply heatmaps to Win Rate, Profit Factor, and Total Return
         win_col = get_column_letter(df.columns.get_loc('Win Rate (%)') + 1)
         pf_col = get_column_letter(df.columns.get_loc('Profit Factor') + 1)
-        ret_col = get_column_letter(df.columns.get_loc('Total Return (%)') + 1)
+        ret_col = get_column_letter(df.columns.get_loc('Sum of Trade Returns (%)') + 1)
         
         ws.conditional_formatting.add(f"{win_col}2:{win_col}{last_row}", green_red_scale)
         ws.conditional_formatting.add(f"{pf_col}2:{pf_col}{last_row}", green_red_scale)
@@ -158,8 +158,8 @@ def run_optimizer():
     take_profits = [0.05, 0.08, 0.12, 0.15]
     parameter_combinations = list(itertools.product(stop_losses, take_profits))
     
-    print(f"Downloading {START_DATE} to {END_DATE} data for {len(tickers)} stocks ONCE...")
-    raw_data = yf.download(tickers, start=START_DATE, end=END_DATE, group_by='ticker', threads=True, progress=False)
+    print(f"Downloading {TRAIN_START} to {TRAIN_END} data for {len(tickers)} stocks ONCE...")
+    raw_data = yf.download(tickers, start=TRAIN_START, end=TRAIN_END, group_by='ticker', threads=True, progress=False)
     
     if raw_data.empty:
         raise SystemExit('[ERROR] No price data downloaded. Check your internet connection and run again.')
@@ -193,11 +193,11 @@ def run_optimizer():
                 'Avg Win (%)': round(avg_win, 2),
                 'Avg Loss (%)': round(avg_loss, 2),
                 'Profit Factor': round(profit_factor, 2),
-                'Total Return (%)': round(total_return, 2)
+                'Sum of Trade Returns (%)': round(total_return, 2)
             })
 
     results_df = pd.DataFrame(results_summary)
-    ranked_results = results_df.sort_values(by='Total Return (%)', ascending=False)
+    ranked_results = results_df.sort_values(by='Sum of Trade Returns (%)', ascending=False)
     
     print("================ OPTIMIZATION RESULTS RANKED ================")
     print(ranked_results.to_string(index=False))

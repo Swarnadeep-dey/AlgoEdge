@@ -10,7 +10,9 @@ RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # --- Backtest window ---
-START_DATE = "2024-01-01"
+TRAIN_START = "2024-01-01"   # optimiser only sees this window
+TRAIN_END = "2025-01-01"     # yfinance end date is exclusive
+START_DATE = "2025-01-01"    # backtest = unseen test window
 END_DATE = "2026-01-01"
 
 # --- Entry / exit rules (mean reversion) ---

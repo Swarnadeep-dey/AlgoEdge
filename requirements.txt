@@ -3,4 +3,4 @@ numpy
 yfinance
 openpyxl
 plotly
-streamlit
+streamlit==1.65.0

@@ -307,6 +307,19 @@ def calculate_performance_metrics(portfolio, risk_free_rate=0.05):
         ],
     }
 
+def get_benchmark_equity(df_equity, initial_capital):
+    start = pd.to_datetime(df_equity['Date'].iloc[0])
+    end = pd.to_datetime(df_equity['Date'].iloc[-1]) + pd.Timedelta(days=1)
+    try:
+        b = yf.download('NIFTYBEES.NS', start=start.strftime('%Y-%m-%d'),
+                        end=end.strftime('%Y-%m-%d'), progress=False)
+        close = (b['Close']['NIFTYBEES.NS'] if isinstance(b.columns, pd.MultiIndex) else b['Close']).dropna()
+        out = (close / close.iloc[0] * initial_capital).reset_index()
+        out.columns = ['Date', 'Benchmark Equity']
+        return out
+    except Exception:
+        return pd.DataFrame()
+
 def export_professional_excel(portfolio, filename=RESULTS_DIR / 'Backtest_Report.xlsx'):
     df_equity = pd.DataFrame(portfolio.daily_equity)
     df_trades = pd.DataFrame(portfolio.trade_log)
@@ -322,7 +335,50 @@ def export_professional_excel(portfolio, filename=RESULTS_DIR / 'Backtest_Report
 
         df_equity.to_excel(writer, sheet_name='Equity Curve', index=False)
         df_trades.to_excel(writer, sheet_name='Trade Log', index=False)
+        df_bench = get_benchmark_equity(df_equity, portfolio.initial_capital)
+        if not df_bench.empty:
+            df_cmp = df_equity.assign(Date=pd.to_datetime(df_equity['Date'])).merge(
+                df_bench.assign(Date=pd.to_datetime(df_bench['Date'])), on='Date', how='left').ffill().bfill()
+            df_cmp.columns = ['Date', 'Strategy Equity', 'Benchmark Equity']
+            df_cmp.to_excel(writer, sheet_name='Benchmark', index=False)
+            ws_b = writer.sheets['Benchmark']
 
+            for cell in ws_b[1]:
+                cell.font = Font(bold=True, color='FFFFFF')
+                cell.fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+                cell.alignment = Alignment(horizontal='center')
+            for row in range(2, len(df_cmp) + 2):
+                ws_b.cell(row=row, column=1).number_format = 'yyyy-mm-dd'
+                ws_b.cell(row=row, column=1).alignment = Alignment(horizontal='center')
+                ws_b.cell(row=row, column=2).number_format = '[$₹-en-IN]#,##0.00'
+                ws_b.cell(row=row, column=3).number_format = '[$₹-en-IN]#,##0.00'
+            ws_b.column_dimensions['A'].width = 16
+            ws_b.column_dimensions['B'].width = 20
+            ws_b.column_dimensions['C'].width = 20
+            ws_b.freeze_panes = 'A2'
+
+            bchart = LineChart()
+            bchart.x_axis = DateAxis(crossAx=100)
+            bchart.x_axis.number_format = 'mmm-yy'
+            bchart.x_axis.majorTimeUnit = 'months'
+            bchart.x_axis.majorUnit = 3
+            bchart.x_axis.tickLblPos = 'low'
+            bchart.x_axis.delete = False
+            bchart.y_axis.crossAx = 500
+            bchart.y_axis.delete = False
+            bchart.y_axis.number_format = '#,##0'
+            bchart.title = 'Strategy vs NIFTYBEES (₹)'
+            bchart.width = 30
+            bchart.height = 10
+            bchart.add_data(Reference(ws_b, min_col=2, max_col=3, min_row=1, max_row=len(df_cmp) + 1), titles_from_data=True)
+            bchart.set_categories(Reference(ws_b, min_col=1, min_row=2, max_row=len(df_cmp) + 1))
+            bchart.series[0].graphicalProperties.line.solidFill = '1F4E78'
+            bchart.series[1].graphicalProperties.line.solidFill = 'ED7D31'
+            for s in bchart.series:
+                s.graphicalProperties.line.width = 25000
+                s.smooth = False
+            ws_b.add_chart(bchart, 'E2')
+##
         if not df_metrics.empty:
             ws_sum = writer.sheets['Executive Summary']
             ws_sum.column_dimensions['A'].width = 30
