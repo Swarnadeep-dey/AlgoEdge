@@ -1,13 +1,5 @@
-"""Formatted Excel reports for AlgoEdge (backtest, optimizer, screener).
+"""Excel styling and export logic."""
 
-The three scripts (Backtester.py, Optimeser.py, Screeners.py) hand their results to
-the functions below, so all workbook styling lives in one place.
-
-Compatibility note: Dashboard.py reads some sheets by name and column header
-('Executive Summary', 'Equity Curve', 'Benchmark', 'Trade Log', and the FIRST sheet of
-Optimization.xlsx). Those sheets keep their header in row 1 with the same column names,
-so changing the look here can never break the dashboard.
-"""
 import math
 
 import pandas as pd
@@ -21,7 +13,7 @@ from openpyxl.formatting.rule import ColorScaleRule, DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter as L
 
-# ----------------------------------------------------------------------------- style
+# style
 FONT = "Arial"
 NAVY, BLUE, ORANGE, RED, GREEN = "1F4E78", "2A78D6", "EB6834", "E34948", "0CA30C"
 INK, MUTED, CARD, LINE, GRID = "1A1A19", "6B6A66", "F3F5F8", "D4D8DE", "E1E0D9"
@@ -80,7 +72,7 @@ def section_label(ws, row, col, text):
 
 
 def card(ws, top, left, span, label, value, note=None, number_format=None):
-    """Three-row KPI card: small label, large value, small note. `value`/`note` may be formulas."""
+    """Renders a standard metric card."""
     last = left + span - 1
     heights = (17, 32, 17)
     for i in range(3):
@@ -102,7 +94,7 @@ def card(ws, top, left, span, label, value, note=None, number_format=None):
     nt.font = F(9, False, MUTED)
 
 
-def style_chart(ch, title, width, height, legend="b"):
+def style_chart(ch, title, width, height, legend="t"):
     ch.title = title
     ch.width, ch.height = width, height
     if legend is None:
@@ -148,7 +140,7 @@ def nice_ceil(x, step):
     return math.ceil(x / step) * step
 
 
-# ----------------------------------------------------------------------------- backtest
+# backtest
 METRIC_HELP = {
     "Initial Capital": "Starting cash for the simulation.",
     "Final Portfolio Value": "Cash plus open positions at the end of the test window.",
@@ -169,11 +161,11 @@ def write_backtest_report(path, df_equity, df_trades, df_metrics, df_bench, meta
     ws_d = wb.active
     ws_d.title = "Dashboard"
     ws_a = wb.create_sheet("Trade Analytics")
+    ws_t = wb.create_sheet("Trade Log")
     ws_s = wb.create_sheet("Executive Summary")
     ws_e = wb.create_sheet("Equity Curve")
     has_bench = df_bench is not None and not df_bench.empty
     ws_b = wb.create_sheet("Benchmark") if has_bench else None
-    ws_t = wb.create_sheet("Trade Log")
     for ws, color in ((ws_d, NAVY), (ws_a, NAVY), (ws_s, BLUE), (ws_e, BLUE), (ws_b, BLUE), (ws_t, BLUE)):
         if ws is not None:
             ws.sheet_properties.tabColor = color
@@ -337,8 +329,7 @@ def write_backtest_report(path, df_equity, df_trades, df_metrics, df_bench, meta
         ch.set_categories(Reference(ws_e, min_col=1, min_row=2, max_row=last_e))
         lo, hi = df_equity["Portfolio Equity"].min(), df_equity["Portfolio Equity"].max()
         colors = (BLUE,)
-    style_chart(ch, "Portfolio value (₹)" + (" vs NIFTYBEES buy & hold" if has_bench else ""), 33, 9,
-                legend="b" if has_bench else None)
+    style_chart(ch, "Portfolio value (₹)", 33, 11.5, legend=None)
     ch.y_axis.number_format = "#,##0"
     pad = max((hi - lo) * 0.08, 1000)
     ch.y_axis.scaling.min = nice_floor(lo - pad, 5000)
@@ -479,7 +470,7 @@ def write_backtest_report(path, df_equity, df_trades, df_metrics, df_bench, meta
     hist.gapWidth = 15
     hist.add_data(Reference(ws_a, min_col=3, max_col=4, min_row=hdr, max_row=h_end), titles_from_data=True)
     hist.set_categories(Reference(ws_a, min_col=2, min_row=hdr + 1, max_row=h_end))
-    style_chart(hist, "Return per trade, net of costs", 20, 8, legend="b")
+    style_chart(hist, "Return per trade, net of costs", 20, 8,  legend=None)
     color_series(hist.series[0], RED)
     color_series(hist.series[1], GREEN)
     ws_a.add_chart(hist, f"G{s0}")
@@ -510,7 +501,7 @@ def write_backtest_report(path, df_equity, df_trades, df_metrics, df_bench, meta
     pb.gapWidth = 40
     pb.add_data(Reference(ws_a, min_col=4, max_col=5, min_row=p0 + 1, max_row=p_end), titles_from_data=True)
     pb.set_categories(Reference(ws_a, min_col=2, min_row=p0 + 2, max_row=p_end))
-    style_chart(pb, "Profit by stock (₹)", 20, max(8, 0.52 * len(by_stock) + 2), legend="b")
+    style_chart(pb, "Profit by stock (₹)", 20, max(8, 0.52 * len(by_stock) + 2),  legend=None)
     pb.x_axis.scaling.orientation = "maxMin"
     pb.y_axis.crosses = "max"
     pb.y_axis.number_format = "#,##0"
@@ -524,7 +515,7 @@ def write_backtest_report(path, df_equity, df_trades, df_metrics, df_bench, meta
     wb.save(path)
 
 
-# ----------------------------------------------------------------------------- optimizer
+# optimizer
 def write_optimization_report(path, df, meta):
     """df columns: Stop Loss, Take Profit (text like '7%'), Trades, Win Rate (%), Avg Win (%),
     Avg Loss (%), Profit Factor, Sum of Trade Returns (%).  Must already be sorted as desired.
@@ -655,7 +646,7 @@ def write_optimization_report(path, df, meta):
     wb.save(path)
 
 
-# ----------------------------------------------------------------------------- screener
+#  screener
 def write_screener_report(path, df, meta):
     """df columns: Ticker, LTP (₹), 20-Day SMA (₹), RSI (14), MACD, MACD Signal, Price > SMA,
     RSI Oversold, MACD Bullish, Signal Strength.  meta keys: entry_rsi, exit_rsi, generated."""
@@ -764,7 +755,7 @@ def write_screener_report(path, df, meta):
     bar.gapWidth = 40
     bar.add_data(Reference(cs, min_col=3, max_col=4, min_row=h2, max_row=end), titles_from_data=True)
     bar.set_categories(Reference(cs, min_col=1, min_row=h2 + 1, max_row=end))
-    style_chart(bar, "RSI (14) by stock", 32, 11, legend="b")
+    style_chart(bar, "RSI (14) by stock", 32, 11, legend=None)
     bar.y_axis.scaling.min = 0
     bar.y_axis.scaling.max = 100
     color_series(bar.series[0], BLUE)

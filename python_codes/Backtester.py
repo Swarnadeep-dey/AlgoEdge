@@ -21,25 +21,29 @@ from strategy_config import (
 )
 
 
-# --- 1. Event Classes ---
+# Events
 class Event: pass
 
 class MarketEvent(Event):
     def __init__(self): self.type = 'MARKET'
 
 class SignalEvent(Event):
-    def __init__(self, symbol, date, signal_type):
+    # Added target_price to carry exact SL/TP trigger prices
+    def __init__(self, symbol, date, signal_type, target_price):
         self.type = 'SIGNAL'
         self.symbol = symbol
         self.date = date
         self.signal_type = signal_type
+        self.target_price = target_price
 
 class OrderEvent(Event):
-    def __init__(self, symbol, order_type, quantity):
+    # Pass target_price to broker
+    def __init__(self, symbol, order_type, quantity, target_price):
         self.type = 'ORDER'
         self.symbol = symbol
         self.order_type = order_type
         self.quantity = quantity
+        self.target_price = target_price
 
 class FillEvent(Event):
     def __init__(self, date, symbol, quantity, direction, fill_price, commission):
@@ -51,44 +55,48 @@ class FillEvent(Event):
         self.fill_price = fill_price
         self.commission = commission
 
-# --- 2. Data Feeder ---
+# Data handler
 class DataHandler:
     def __init__(self, events_queue, tickers, start_date, end_date):
         self.events_queue = events_queue
         self.tickers = tickers
         
         print(f"Downloading historical data for {len(tickers)} assets...")
-        df = yf.download(tickers, start=start_date, end=end_date, progress=False)
+        # Added auto_adjust=True to fix unadjusted price/split trap
+        df = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
         if df.empty:
             raise SystemExit('[ERROR] No price data downloaded. Check your internet connection and run again.')
         
+        # Cleanly segregate High, Low, Close regardless of single/multi-ticker yf output
         if len(tickers) == 1:
-            self.data = pd.DataFrame(df['Close'])
-            self.data.columns = tickers
+            self.closes = pd.DataFrame({tickers[0]: df['Close']})
+            self.highs = pd.DataFrame({tickers[0]: df['High']})
+            self.lows = pd.DataFrame({tickers[0]: df['Low']})
         else:
-            self.data = df['Close'].ffill()
+            self.closes = df['Close'].ffill()
+            self.highs = df['High'].ffill()
+            self.lows = df['Low'].ffill()
             
-        self.data = self.data.reset_index()
+        self.dates = df.index
         self.current_idx = 0
 
     def update_market(self):
-        if self.current_idx < len(self.data):
+        if self.current_idx < len(self.dates):
             self.current_idx += 1
             self.events_queue.append(MarketEvent())
             return True
         return False
 
-    def get_historical_data(self):
-        return self.data.iloc[:self.current_idx]
+    def get_historical_closes(self):
+        return self.closes.iloc[:self.current_idx]
 
-    def get_latest_price(self, ticker):
-        return float(self.data[ticker].iloc[self.current_idx - 1])
+    def get_latest_close(self, ticker): return float(self.closes[ticker].iloc[self.current_idx - 1])
+    def get_latest_high(self, ticker): return float(self.highs[ticker].iloc[self.current_idx - 1])
+    def get_latest_low(self, ticker): return float(self.lows[ticker].iloc[self.current_idx - 1])
+    def get_latest_date(self): return pd.to_datetime(self.dates[self.current_idx - 1]).date()
 
-    def get_latest_date(self):
-        dt = self.data['Date'].iloc[self.current_idx - 1]
-        return pd.to_datetime(dt).date()
 
-# --- 3. RSI Strategy with Optimized Risk-Reward ---
+# --- 3. RSI Strategy with Intraday Stop/Target Tracking & 200-SMA Macro Trend Filter ---
 class RSIStrategy:
     def __init__(self, events_queue, data_handler, period=RSI_PERIOD):
         self.events_queue = events_queue
@@ -99,8 +107,9 @@ class RSIStrategy:
 
     def calculate_signals(self, event):
         if event.type == 'MARKET':
-            history = self.data_handler.get_historical_data()
-            if len(history) >= self.period + 1:
+            history = self.data_handler.get_historical_closes()
+            # Ensure we have enough data for 200-SMA
+            if len(history) >= max(200, self.period + 1):
                 latest_date = self.data_handler.get_latest_date()
                 
                 for symbol in self.data_handler.tickers:
@@ -111,29 +120,39 @@ class RSIStrategy:
                     rs = gain / loss
                     rsi = 100 - (100 / (1 + rs))
                     
-                    latest_rsi = rsi.iloc[-1]
-                    latest_price = float(closes.iloc[-1])
+                    latest_rsi = float(rsi.iloc[-1])
+                    latest_close = float(closes.iloc[-1])
+                    
+                    # Calculate 200-day Simple Moving Average
+                    sma_200 = float(closes.rolling(window=200).mean().iloc[-1])
 
-                    # Entry: wait for a deep dip (RSI < ENTRY_RSI)
-                    if not self.invested[symbol] and latest_rsi < ENTRY_RSI:
-                        self.events_queue.append(SignalEvent(symbol, latest_date, 'LONG'))
+                    # MACRO TREND FILTER: Only enter trades if price is ABOVE the 200-SMA
+                    if not self.invested[symbol] and latest_rsi < ENTRY_RSI and latest_close > sma_200:
+                        self.events_queue.append(SignalEvent(symbol, latest_date, 'LONG', latest_close))
                         self.invested[symbol] = True
-                        self.entry_price[symbol] = latest_price
-                    elif self.invested[symbol]:
-                        pnl_pct = (latest_price - self.entry_price[symbol]) / self.entry_price[symbol]
+                        self.entry_price[symbol] = latest_close
                         
-                        # Exits: take-profit, stop-loss or RSI recovery (values live in strategy_config.py)
-                        if pnl_pct >= TAKE_PROFIT_PCT:
-                            self.events_queue.append(SignalEvent(symbol, latest_date, 'EXIT_TP'))
+                    elif self.invested[symbol]:
+                        latest_high = self.data_handler.get_latest_high(symbol)
+                        latest_low = self.data_handler.get_latest_low(symbol)
+                        entry = self.entry_price[symbol]
+                        
+                        tp_price = entry * (1 + TAKE_PROFIT_PCT)
+                        sl_price = entry * (1 - STOP_LOSS_PCT)
+                        
+                        if latest_low <= sl_price:
+                            self.events_queue.append(SignalEvent(symbol, latest_date, 'EXIT_SL', sl_price))
                             self.invested[symbol] = False
-                        elif pnl_pct <= -STOP_LOSS_PCT:
-                            self.events_queue.append(SignalEvent(symbol, latest_date, 'EXIT_SL'))
+                        # Then evaluate Take-Profit
+                        elif latest_high >= tp_price:
+                            self.events_queue.append(SignalEvent(symbol, latest_date, 'EXIT_TP', tp_price))
                             self.invested[symbol] = False
+                        # Fallback to EOD RSI exit
                         elif latest_rsi > EXIT_RSI:
-                            self.events_queue.append(SignalEvent(symbol, latest_date, 'EXIT_RSI'))
+                            self.events_queue.append(SignalEvent(symbol, latest_date, 'EXIT_RSI', latest_close))
                             self.invested[symbol] = False
 
-# --- 4. Portfolio & Trade Tracker ---
+# --- 4. Portfolio & Trade Tracker (Compounding Fix) ---
 class Portfolio:
     def __init__(self, events_queue, data_handler, initial_capital=INITIAL_CAPITAL):
         self.events_queue = events_queue
@@ -147,18 +166,21 @@ class Portfolio:
 
     def update_signal(self, event):
         if event.type == 'SIGNAL':
-            latest_price = self.data_handler.get_latest_price(event.symbol)
             if event.signal_type == 'LONG':
-                capital_to_deploy = self.initial_capital * POSITION_SIZE_PCT
+                holdings_value = sum(self.holdings[sym] * self.data_handler.get_latest_close(sym)
+                                     for sym in self.data_handler.tickers if self.holdings[sym] > 0)
+                current_portfolio_value = self.cash + holdings_value
+                
+                capital_to_deploy = current_portfolio_value * POSITION_SIZE_PCT
                 if self.cash >= capital_to_deploy:
-                    quantity = int(capital_to_deploy // latest_price)
+                    quantity = int(capital_to_deploy // event.target_price)
                     if quantity > 0:
-                        self.active_trade[event.symbol] = {'entry_date': event.date, 'entry_price': latest_price}
-                        self.events_queue.append(OrderEvent(event.symbol, 'BUY', quantity))
+                        self.active_trade[event.symbol] = {'entry_date': event.date, 'entry_price': event.target_price}
+                        self.events_queue.append(OrderEvent(event.symbol, 'BUY', quantity, event.target_price))
             elif 'EXIT' in event.signal_type:
                 if self.holdings[event.symbol] > 0:
                     self.active_trade[event.symbol]['exit_reason'] = event.signal_type.replace('EXIT_', '')
-                    self.events_queue.append(OrderEvent(event.symbol, 'SELL', self.holdings[event.symbol]))
+                    self.events_queue.append(OrderEvent(event.symbol, 'SELL', self.holdings[event.symbol], event.target_price))
 
     def update_fill(self, event):
         if event.type == 'FILL':
@@ -166,15 +188,11 @@ class Portfolio:
             if event.direction == 'BUY':
                 self.holdings[event.symbol] += event.quantity
                 self.cash -= (trade_value + event.commission)
-                
-                # NEW: Track the buy-side commission
                 self.active_trade[event.symbol]['buy_comm'] = event.commission
-                
             elif event.direction == 'SELL':
                 self.holdings[event.symbol] -= event.quantity
                 self.cash += (trade_value - event.commission)
                 
-                # NEW: Deduct BOTH buy and sell commissions for accurate Trade Log reporting
                 buy_comm = self.active_trade[event.symbol].get('buy_comm', 0)
                 total_commission = buy_comm + event.commission
                 
@@ -194,8 +212,7 @@ class Portfolio:
 
     def record_daily_equity(self):
         current_date = self.data_handler.get_latest_date()
-        # Skip stocks we don't hold: a not-yet-listed stock has a NaN price, and 0 * NaN would poison the total
-        holdings_value = sum(self.holdings[sym] * self.data_handler.get_latest_price(sym)
+        holdings_value = sum(self.holdings[sym] * self.data_handler.get_latest_close(sym)
                              for sym in self.data_handler.tickers if self.holdings[sym] > 0)
         total_value = self.cash + holdings_value
         self.daily_equity.append({'Date': current_date, 'Portfolio Equity': round(total_value, 2)})
@@ -208,9 +225,8 @@ class SimulatedExecutionHandler:
 
     def execute_order(self, event):
         if event.type == 'ORDER':
-            fill_price = self.data_handler.get_latest_price(event.symbol)
+            fill_price = event.target_price
             date = self.data_handler.get_latest_date()
-            # Commission lowered to 0.10% to accurately model STT and exchange charges for Indian equities delivery
             commission = (fill_price * event.quantity) * COMMISSION_RATE
             self.events_queue.append(FillEvent(date, event.symbol, event.quantity, event.order_type, fill_price, commission))
 
@@ -336,7 +352,7 @@ def export_professional_excel(portfolio, filename=RESULTS_DIR / 'Backtest_Report
     first = pd.to_datetime(df_equity['Date'].iloc[0])
     last = pd.to_datetime(df_equity['Date'].iloc[-1])
     meta = {
-        'rules': (f"Entry RSI < {ENTRY_RSI}  |  Exit: +{TAKE_PROFIT_PCT * 100:g}% take-profit, "
+        'rules': (f"Entry RSI < {ENTRY_RSI} and Price > 200 SMA  |  Exit: +{TAKE_PROFIT_PCT * 100:g}% take-profit, "
                   f"-{STOP_LOSS_PCT * 100:g}% stop-loss or RSI > {EXIT_RSI}  |  "
                   f"{POSITION_SIZE_PCT * 100:g}% of capital per trade, {COMMISSION_RATE * 100:.2f}% commission per side"),
         'generated': pd.Timestamp.now().strftime('%d %b %Y, %I:%M %p'),
@@ -348,7 +364,7 @@ def export_professional_excel(portfolio, filename=RESULTS_DIR / 'Backtest_Report
     print(f'Professional Backtest Report successfully saved to {filename}')
 
 def get_dynamic_tickers(db_name=RESULTS_DIR / "market_data.db"):
-    """Pulls unique tickers from the SQLite database with safe fallback logic."""
+    """Loads tickers from DB or returns a default list."""
     fallback_tickers = ['RELIANCE.NS', 'HDFCBANK.NS', 'INFY.NS', 'TCS.NS', 'ICICIBANK.NS']
     
     if not os.path.exists(db_name):
@@ -360,7 +376,6 @@ def get_dynamic_tickers(db_name=RESULTS_DIR / "market_data.db"):
         df = pd.read_sql_query("SELECT DISTINCT Ticker FROM screener_history", conn)
         conn.close()
         
-        # --- THE FIX: Re-append '.NS' to every ticker for Yahoo Finance ---
         db_tickers = [str(ticker) + '.NS' for ticker in df['Ticker'].tolist()]
         # ------------------------------------------------------------------
         

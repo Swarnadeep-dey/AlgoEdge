@@ -1,8 +1,5 @@
-"""Single source of truth for the strategy, shared by Screeners, Backtester and Optimeser.
+"""Global configuration for the trading pipeline."""
 
-Change a rule here and every script picks it up, so the optimiser can never
-drift away from the backtester again.
-"""
 from pathlib import Path
 
 # --- Paths (anchored to this file, so scripts work from any working directory / OS) ---
@@ -10,14 +7,15 @@ RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # --- Backtest window ---
-TRAIN_START = "2024-01-01"   # optimiser only sees this window
-TRAIN_END = "2025-01-01"     # yfinance end date is exclusive
-START_DATE = "2025-01-01"    # backtest = unseen test window
-END_DATE = "2026-01-01"
+TRAIN_START = "2024-01-01"  
+TRAIN_END = "2025-12-31"    
 
-# --- Entry / exit rules (mean reversion) ---
+START_DATE = "2025-01-01"    
+END_DATE = "2030-01-01"     
+
+# Strategy params
 RSI_PERIOD = 14
-ENTRY_RSI = 25          # buy when RSI falls below this
+ENTRY_RSI = 35          # buy when RSI falls below this
 EXIT_RSI = 60           # sell when RSI recovers above this
 STOP_LOSS_PCT = 0.10    # 10% stop-loss   (pick the winner from Optimization.xlsx)
 TAKE_PROFIT_PCT = 0.05  # 5% take-profit

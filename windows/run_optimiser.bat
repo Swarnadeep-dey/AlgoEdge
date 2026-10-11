@@ -1,6 +1,6 @@
 @echo off
 echo ===================================================
-echo Starting MarketMentor Grid Search Optimizer
+echo Starting AlgoEdge Grid Search Optimizer
 echo ===================================================
 
 cd /d "%~dp0.."

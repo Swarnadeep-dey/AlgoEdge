@@ -1,6 +1,6 @@
 @echo off
 echo ===================================================
-echo Starting MarketMentor Quantitative Pipeline
+echo Starting AlgoEdge Quantitative Pipeline
 echo ===================================================
 
 :: Always run from the folder this batch file lives in

@@ -9,7 +9,7 @@ from strategy_config import ENTRY_RSI, EXIT_RSI, RESULTS_DIR
 
 
 def internet_ok(host="query1.finance.yahoo.com"):
-    """True if Yahoo Finance's hostname resolves (catches DNS / offline / VPN problems early)."""
+    """Basic connectivity check."""
     try:
         socket.gethostbyname(host)
         return True
@@ -38,7 +38,6 @@ def run_screener(tickers):
             failed.append(ticker)
             continue
 
-        # Technical Calculations
         data['SMA_20'] = data['Close'].rolling(window=20).mean()
 
         delta = data['Close'].diff()
@@ -52,7 +51,6 @@ def run_screener(tickers):
         data['MACD'] = ema_12 - ema_26
         data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
 
-        # Extract Latest Values
         latest_close = float(data['Close'].iloc[-1])
         latest_sma = float(data['SMA_20'].iloc[-1])
         latest_rsi = float(data['RSI_14'].iloc[-1])
@@ -63,7 +61,6 @@ def run_screener(tickers):
             failed.append(ticker)
             continue
 
-        # Boolean Flags
         is_uptrend = latest_close > latest_sma
         is_oversold = latest_rsi < ENTRY_RSI
         is_macd_bullish = latest_macd > latest_macd_signal

@@ -1,7 +1,5 @@
-"""AlgoEdge dashboard: screener, backtest analytics and optimizer results.
+"""Streamlit dashboard for strategy metrics."""
 
-Reads everything from ../results, so it works from any folder and on any OS.
-"""
 import inspect
 import sqlite3
 import subprocess
@@ -24,7 +22,6 @@ def conf(name, default):
     return getattr(cfg, name, default)
 
 
-# ------------------------------------------------------------------ paths & settings
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR = HERE.parent / "results"
 DB_PATH = RESULTS_DIR / "market_data.db"
@@ -124,7 +121,7 @@ def parse_num(text):
         return None
 
 
-# ------------------------------------------------------------------ data loaders
+#  data loaders
 @st.cache_data(show_spinner=False)
 def load_screener(_key):
     conn = sqlite3.connect(DB_PATH)
@@ -169,7 +166,6 @@ def load_optimizer(_key):
     return df
 
 
-# ------------------------------------------------------------------ sidebar
 with st.sidebar:
     st.markdown("### 📈 AlgoEdge")
     st.caption("Event-driven mean-reversion engine for NIFTY 50")
@@ -204,7 +200,7 @@ with st.sidebar:
     st.markdown(f"[GitHub repository]({GITHUB_URL})")
     st.caption("Educational project, not investment advice.")
 
-# ------------------------------------------------------------------ header
+#  header
 st.markdown(
     f"""
 <div class="hero">
@@ -221,7 +217,7 @@ st.markdown(
 
 tab_scr, tab_bt, tab_opt = st.tabs(["📊 Screener", "📉 Backtest", "🧪 Optimizer"])
 
-# ------------------------------------------------------------------ TAB 1: screener
+#  TAB 1: screener
 with tab_scr:
     if not DB_PATH.exists():
         st.info("No screener data yet. Run the pipeline (or click Refresh in the sidebar) to generate it.")
@@ -280,7 +276,7 @@ with tab_scr:
         fig.update_xaxes(tickangle=-60, categoryorder="array", categoryarray=list(r["Ticker"]))
         show_fig(fig, 340, legend=True, hover="closest")
 
-# ------------------------------------------------------------------ TAB 2: backtest
+#  TAB 2: backtest
 with tab_bt:
     if not BACKTEST_PATH.exists():
         st.info("No backtest report yet. Run the pipeline to generate it.")
@@ -407,7 +403,7 @@ with tab_bt:
             })
             st.download_button("Download trade log (CSV)", log.to_csv(index=False).encode(), "trade_log.csv", "text/csv")
 
-# ------------------------------------------------------------------ TAB 3: optimizer
+#  TAB 3: optimizer
 with tab_opt:
     if not OPT_PATH.exists():
         st.info("No optimizer results yet. Run the optimizer script to generate them.")
