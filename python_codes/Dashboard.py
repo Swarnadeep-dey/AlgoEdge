@@ -18,8 +18,8 @@ SCREENER_PATH = Path(__file__).resolve().parent / "Screeners.py"
 IS_CLOUD = Path("/mount/src").exists()   # best-effort check for Streamlit Cloud
 
 # Configure the web page
-st.set_page_config(page_title="MarketMentor Quant Engine", page_icon="📈", layout="wide")
-st.title("📈 MarketMentor Quantitative Pipeline")
+st.set_page_config(page_title="Quant Engine", page_icon="📈", layout="wide")
+st.title("📈Quantitative Pipeline")
 st.markdown("Automated NIFTY 50 Mean-Reversion Trading System")
 
 # Create navigation tabs
