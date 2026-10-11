@@ -1,58 +1,95 @@
-# QuantPipeline: Event-Driven Algorithmic Trading Engine
+# AlgoEdge (QuantPipeline): Event-Driven Algorithmic Trading Engine
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
 ![SQLite](https://img.shields.io/badge/SQLite-Database-lightgrey.svg)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Web_App-red.svg)
 ![Finance](https://img.shields.io/badge/Quant-Finance-green.svg)
 
-## Overview
-A full-stack quantitative trading pipeline engineered for Indian equities (NIFTY 50). This system features a daily SQLite-backed screener, a robust **event-driven backtesting engine**, a grid-search parameter optimizer, and a dynamic Streamlit web dashboard. 
+**Live dashboard:** [https://algoedge.streamlit.app](https://algoedge.streamlit.app)
 
-Designed with institutional architecture in mind, the pipeline strictly models market realities by accounting for broker commissions (0.10%), dynamic time/indicator-based exits, and benchmark comparisons (CAPM metrics) against the NIFTYBEES ETF.
+## Overview
+A quantitative trading pipeline for Indian equities (NIFTY 50): a daily SQLite-backed screener, an **event-driven backtesting engine**, a stop-loss/take-profit grid-search optimizer, and a Streamlit dashboard.
+
+The backtester models broker commissions (0.10% per side), indicator- and price-based exits, and benchmark-relative metrics (beta, alpha) against the NIFTYBEES ETF. The strategy parameters are tuned on one period and tested on a later period the optimizer never saw (see [Methodology](#methodology)).
 
 ## System Architecture
 
-The pipeline is entirely modular and Object-Oriented, built around four core execution layers:
+The pipeline is modular and object-oriented, built around four layers:
 
 ### 1. Data Acquisition & Storage (`Screeners.py`)
-* Extracts daily historical data for the NIFTY 50 basket using `yfinance`.
-* Computes technical indicators (Wilder's Smoothed RSI, SMA, MACD) to generate a boolean signal strength matrix.
-* Writes an end-of-day momentum snapshot directly into a local **SQLite database** (`market_data.db`) using a `REPLACE` protocol to prevent data drift and ensure the live engine trades only the freshest setups.
+* Downloads 6 months of daily data per NIFTY 50 stock using `yfinance`.
+* Computes RSI (Wilder's smoothing), 20-day SMA and MACD, then scores each stock 0-3 on three conditions (price above SMA, RSI oversold, MACD bullish).
+* Saves the snapshot to a local **SQLite database** (`market_data.db`), replacing the previous one on each run.
+* Skips stocks with missing data and refuses to overwrite existing results if nothing downloads.
 
 ### 2. Event-Driven Backtesting Engine (`Backtester.py`)
-Replaces traditional vectorized backtesting with a true event-driven queue (simulating a live trading environment). The engine loops through a continuous stream of events:
-* **`MarketEvent`**: Triggers data ingestion and indicator updates.
-* **`SignalEvent`**: Evaluates conditions (e.g., RSI < 25) to trigger Long/Short logic.
-* **`OrderEvent`**: Sizes the position based on capital availability (allocating exactly 10% of total equity per trade).
-* **`FillEvent`**: Executes the trade, deducting realistic buy/sell commissions and updating the portfolio cash balance.
+Processes a queue of events instead of vectorized calculations:
+* **`MarketEvent`**: advances one trading day and triggers indicator updates.
+* **`SignalEvent`**: fires when RSI falls below the entry threshold (25), or an exit condition is met.
+* **`OrderEvent`**: sizes each position at 10% of initial capital, subject to available cash.
+* **`FillEvent`**: executes at the day's close, deducts commissions and updates the portfolio.
 
-### 3. Quantitative Risk & Optimization (`Optimeser.py`)
-* A dedicated grid-search engine that brute-forces parameter combinations (Stop-Loss vs. Take-Profit).
-* Replays the **exact same rules as the backtester** (shared via `strategy_config.py`: RSI entry/exit, commissions, date window) for every Stop-Loss/Take-Profit pair, then ranks them by Total Return, Profit Factor and Win Rate.
-* The chosen pair is set once in `strategy_config.py` and used by the backtester.
+Exits trigger on take-profit, stop-loss (both checked on the daily close) or RSI recovery above 60.
 
-### 4. Presentation & Analytics (`Dashboard.py`)
-* An interactive **Streamlit** frontend allowing non-technical users to visualize portfolio equity curves, inspect real-time screener databases, and review trade logs.
-* Automated report generation using `openpyxl` to export executive summaries and conditionally formatted heatmaps.
+### 3. Parameter Optimization (`Optimeser.py`)
+* Grid search over 16 stop-loss / take-profit pairs.
+* Uses the **same entry/exit rules, commissions and thresholds as the backtester** (shared through `strategy_config.py`).
+* Runs on the **training window only** (2024) and ranks pairs by Profit Factor, Win Rate and Sum of Trade Returns.
+* The chosen pair is then set in `strategy_config.py` and tested on 2025 data.
 
-## Performance & CAPM Metrics
-The strategy isolates mean-reversion setups using deep RSI oversold conditions coupled with strict risk management. Recent multi-year historical validation on the NIFTY 50 yielded:
+### 4. Dashboard (`Dashboard.py`)
+* Streamlit app with three tabs: screener, backtest analytics (metrics, equity curve vs NIFTYBEES, drawdown, trade log) and optimizer results.
+* A refresh button re-runs the screener locally (hidden on the hosted version).
+* Reports are also exported to formatted Excel files (`openpyxl`).
 
-| Metric | Value | Interpretation |
+## Methodology
+
+| Item | Setting |
+| :--- | :--- |
+| Universe | Current NIFTY 50 constituents |
+| Entry | RSI(14) < 25 |
+| Exit | Take-profit, stop-loss or RSI(14) > 60 |
+| Position size | 10% of initial capital per trade |
+| Costs | 0.10% per side, no slippage |
+| Initial capital | ₹1,00,000 |
+| Training window (optimizer) | 1 Jan 2024 - 31 Dec 2024 |
+| Test window (backtest) | 1 Jan 2025 - 31 Dec 2025 |
+| Benchmark | NIFTYBEES.NS (NIFTY 50 ETF) |
+
+## Results (test window, out-of-sample)
+
+Chosen parameters: **Stop-Loss [X]% / Take-Profit [Y]%** (selected on 2024 data only).
+
+| Metric | Strategy | Notes |
 | :--- | :--- | :--- |
-| **Profit Factor** | 1.50 | Gross profits were 50% larger than gross losses. |
-| **Max Drawdown** | -5.67% | High capital preservation during broader market sell-offs. |
-| **Strategy Beta** | 0.32 | 68% less volatile than the benchmark index. |
-| **Annualized Volatility** | 6.95% | Smooth, steady equity curve. |
+| Final Portfolio Value | [fill in] | Starting from ₹1,00,000 |
+| CAGR | [fill in] | |
+| Annualized Volatility | [fill in] | |
+| Sharpe Ratio (Rf = 5%) | [fill in] | |
+| Sortino Ratio | [fill in] | |
+| Max Drawdown | [fill in] | |
+| Profit Factor | [fill in] | Gross profit / gross loss |
+| Strategy Beta | [fill in] | Sensitivity to NIFTYBEES daily moves |
+| Strategy Alpha (annualized) | [fill in] | CAPM alpha, Rf = 5% |
 
-*Note: Portfolio analytics include comprehensive calculations for Annualized Volatility, Sharpe Ratio, Sortino Ratio, Strategy Beta, and Strategy Alpha.*
+Copy these values from the "Backtest Analytics" tab of the dashboard after your final run, and add one plain sentence on what they show.
+
+## Limitations
+
+These results should be read as a test of the framework, not as evidence of a tradable edge.
+* **Short test window:** one calendar year gives a small number of trades, so the metrics are noisy.
+* **Survivorship bias:** the universe is today's NIFTY 50 applied to past data, so stocks that were removed from the index are not tested.
+* **Optimizer vs backtester:** the optimizer takes every signal on every stock, while the backtester is a capital-constrained portfolio (10% per trade, limited cash). Their trade counts and Profit Factors therefore differ by design.
+* **"Sum of Trade Returns"** in the optimizer is the sum of per-trade percentage returns. It is not portfolio growth.
+* **Simplified execution:** fills at the daily close, no slippage, no taxes, and stop-loss and take-profit are checked on closing prices only.
+* **Data source:** free Yahoo Finance data, which can have gaps or adjustments.
 
 ## Tech Stack
 * **Language:** Python
-* **Data Processing & Math:** `pandas`, `numpy`
-* **Data Retrieval:** `yfinance`
+* **Data processing:** `pandas`, `numpy`
+* **Data retrieval:** `yfinance`
 * **Database:** `sqlite3`
-* **Visualization & Frontend:** `streamlit`, `plotly`, `openpyxl`
+* **Visualization & frontend:** `streamlit`, `plotly`, `matplotlib`, `openpyxl`
 
 ## Project Structure
 
@@ -64,7 +101,7 @@ AlgoEdge/
 │   ├── Backtester.py
 │   ├── Optimeser.py
 │   └── Dashboard.py
-├── results/                 # auto-generated: market_data.db + .xlsx reports
+├── results/                 # market_data.db + .xlsx reports
 ├── windows/                 # run_pipeline.bat, run_optimizer.bat
 ├── mac_linux/               # run_pipeline.sh, run_optimizer.sh
 └── requirements.txt
@@ -78,13 +115,15 @@ AlgoEdge/
    cd AlgoEdge
    pip install -r requirements.txt
    ```
-2. **Run the pipeline** (screener first, then backtester; outputs go to `results/`):
-   * Windows: double-click `windows\run_pipeline.bat`
-   * Mac/Linux: `./mac_linux/run_pipeline.sh` (run `chmod +x mac_linux/*.sh` once)
-3. **(Optional) Run the optimizer:** `windows\run_optimizer.bat` / `./mac_linux/run_optimizer.sh`
-4. **Open the dashboard:**
+2. **Open the dashboard** (sample results are included in `results/`):
    ```bash
    streamlit run python_codes/Dashboard.py
    ```
+3. **Refresh the data (optional):**
+   * Run the optimizer first if you want to re-tune: `windows\run_optimizer.bat` / `./mac_linux/run_optimizer.sh`
+   * Then the pipeline: `windows\run_pipeline.bat` / `./mac_linux/run_pipeline.sh` (run `chmod +x mac_linux/*.sh` once on Mac/Linux). It runs the screener, then the backtester, then opens the dashboard.
 
-The screener must run before the backtester/optimizer, because they read their ticker list from `results/market_data.db`. To change the strategy, edit `python_codes/strategy_config.py`.
+The screener must run before the backtester and optimizer, because they read their ticker list from `results/market_data.db`. To change the strategy, edit `python_codes/strategy_config.py`.
+
+## Disclaimer
+This project is for educational and research purposes only and is not investment advice.
