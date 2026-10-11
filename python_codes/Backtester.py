@@ -5,10 +5,7 @@ import sqlite3
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from openpyxl.chart import LineChart, Reference
-from openpyxl.chart.axis import DateAxis
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from Excel_reports import write_backtest_report
 from strategy_config import (
     COMMISSION_RATE,
     END_DATE,
@@ -308,213 +305,46 @@ def calculate_performance_metrics(portfolio, risk_free_rate=0.05):
     }
 
 def get_benchmark_equity(df_equity, initial_capital):
+    """NIFTYBEES buy-and-hold, scaled to the same starting capital. Empty frame if the download fails."""
     start = pd.to_datetime(df_equity['Date'].iloc[0])
     end = pd.to_datetime(df_equity['Date'].iloc[-1]) + pd.Timedelta(days=1)
     try:
         b = yf.download('NIFTYBEES.NS', start=start.strftime('%Y-%m-%d'),
                         end=end.strftime('%Y-%m-%d'), progress=False)
-        close = (b['Close']['NIFTYBEES.NS'] if isinstance(b.columns, pd.MultiIndex) else b['Close']).dropna()
+        close = b['Close']
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = close.dropna()
         out = (close / close.iloc[0] * initial_capital).reset_index()
         out.columns = ['Date', 'Benchmark Equity']
         return out
-    except Exception:
+    except Exception as e:
+        print(f"Warning: could not build the benchmark curve ({e})")
         return pd.DataFrame()
 
 def export_professional_excel(portfolio, filename=RESULTS_DIR / 'Backtest_Report.xlsx'):
+    """Builds Backtest_Report.xlsx (dashboard-style sheets live in excel_reports.py)."""
     df_equity = pd.DataFrame(portfolio.daily_equity)
     df_trades = pd.DataFrame(portfolio.trade_log)
-
     metrics_dict = calculate_performance_metrics(portfolio)
+    if not metrics_dict:
+        print('Not enough data to build a report.')
+        return
     df_metrics = pd.DataFrame(metrics_dict)
+    df_bench = get_benchmark_equity(df_equity, portfolio.initial_capital)
 
+    first = pd.to_datetime(df_equity['Date'].iloc[0])
+    last = pd.to_datetime(df_equity['Date'].iloc[-1])
+    meta = {
+        'rules': (f"Entry RSI < {ENTRY_RSI}  |  Exit: +{TAKE_PROFIT_PCT * 100:g}% take-profit, "
+                  f"-{STOP_LOSS_PCT * 100:g}% stop-loss or RSI > {EXIT_RSI}  |  "
+                  f"{POSITION_SIZE_PCT * 100:g}% of capital per trade, {COMMISSION_RATE * 100:.2f}% commission per side"),
+        'generated': pd.Timestamp.now().strftime('%d %b %Y, %I:%M %p'),
+        'test_window': f"{first:%d %b %Y} to {last:%d %b %Y}",
+        'benchmark': 'NIFTYBEES.NS',
+    }
     print(f'Generating Executive Report: {filename}...')
-
-    with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        if not df_metrics.empty:
-            df_metrics.to_excel(writer, sheet_name='Executive Summary', index=False)
-
-        df_equity.to_excel(writer, sheet_name='Equity Curve', index=False)
-        df_trades.to_excel(writer, sheet_name='Trade Log', index=False)
-        df_bench = get_benchmark_equity(df_equity, portfolio.initial_capital)
-        if not df_bench.empty:
-            df_cmp = df_equity.assign(Date=pd.to_datetime(df_equity['Date'])).merge(
-                df_bench.assign(Date=pd.to_datetime(df_bench['Date'])), on='Date', how='left').ffill().bfill()
-            df_cmp.columns = ['Date', 'Strategy Equity', 'Benchmark Equity']
-            df_cmp.to_excel(writer, sheet_name='Benchmark', index=False)
-            ws_b = writer.sheets['Benchmark']
-
-            for cell in ws_b[1]:
-                cell.font = Font(bold=True, color='FFFFFF')
-                cell.fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
-                cell.alignment = Alignment(horizontal='center')
-            for row in range(2, len(df_cmp) + 2):
-                ws_b.cell(row=row, column=1).number_format = 'yyyy-mm-dd'
-                ws_b.cell(row=row, column=1).alignment = Alignment(horizontal='center')
-                ws_b.cell(row=row, column=2).number_format = '[$₹-en-IN]#,##0.00'
-                ws_b.cell(row=row, column=3).number_format = '[$₹-en-IN]#,##0.00'
-            ws_b.column_dimensions['A'].width = 16
-            ws_b.column_dimensions['B'].width = 20
-            ws_b.column_dimensions['C'].width = 20
-            ws_b.freeze_panes = 'A2'
-
-            bchart = LineChart()
-            bchart.x_axis = DateAxis(crossAx=100)
-            bchart.x_axis.number_format = 'mmm-yy'
-            bchart.x_axis.majorTimeUnit = 'months'
-            bchart.x_axis.majorUnit = 3
-            bchart.x_axis.tickLblPos = 'low'
-            bchart.x_axis.delete = False
-            bchart.y_axis.crossAx = 500
-            bchart.y_axis.delete = False
-            bchart.y_axis.number_format = '#,##0'
-            bchart.title = 'Strategy vs NIFTYBEES (₹)'
-            bchart.width = 30
-            bchart.height = 10
-            bchart.add_data(Reference(ws_b, min_col=2, max_col=3, min_row=1, max_row=len(df_cmp) + 1), titles_from_data=True)
-            bchart.set_categories(Reference(ws_b, min_col=1, min_row=2, max_row=len(df_cmp) + 1))
-            bchart.series[0].graphicalProperties.line.solidFill = '1F4E78'
-            bchart.series[1].graphicalProperties.line.solidFill = 'ED7D31'
-            for s in bchart.series:
-                s.graphicalProperties.line.width = 25000
-                s.smooth = False
-            ws_b.add_chart(bchart, 'E2')
-##
-        if not df_metrics.empty:
-            ws_sum = writer.sheets['Executive Summary']
-            ws_sum.column_dimensions['A'].width = 30
-            ws_sum.column_dimensions['B'].width = 20
-
-            header_font = Font(bold=True, color='FFFFFF')
-            header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
-
-            for cell in ws_sum[1]:
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = Alignment(horizontal='center')
-
-        ws_eq = writer.sheets['Equity Curve']
-
-        header_font = Font(bold=True, color='FFFFFF')
-        header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
-
-        for cell in ws_eq[1]:
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal='center')
-
-        for row in range(2, len(df_equity) + 2):
-            ws_eq.cell(row=row, column=1).alignment = Alignment(horizontal='center')
-            ws_eq.cell(row=row, column=1).number_format = 'yyyy-mm-dd'
-            ws_eq.cell(row=row, column=2).number_format = '[$₹-en-IN]#,##0.00'
-
-        ws_eq.column_dimensions['A'].width = 16
-        ws_eq.column_dimensions['B'].width = 22
-
-        chart = LineChart()
-        chart.x_axis = DateAxis(crossAx=100)
-        chart.x_axis.tickLblPos = 'low'
-        chart.x_axis.number_format = 'mmm-yy'
-        chart.x_axis.majorTimeUnit = 'months'
-        chart.x_axis.majorUnit = 3
-        chart.x_axis.delete = False
-        chart.y_axis.crossAx = 500
-        chart.y_axis.delete = False
-
-        chart.title = 'Portfolio Equity Curve (₹)'
-        chart.x_axis.title = 'Date'
-        chart.y_axis.title = 'Portfolio Value (₹)'
-        chart.width = 30
-        chart.height = 10
-        chart.legend = None
-        chart.y_axis.number_format = '#,##0'
-
-        low = df_equity['Portfolio Equity'].min()
-        high = df_equity['Portfolio Equity'].max()
-        pad = (high - low) * 0.1
-        chart.y_axis.scaling.min = int((low - pad) // 1000 * 1000)
-        chart.y_axis.scaling.max = int((high + pad) // 1000 * 1000 + 1000)
-
-        data_ref = Reference(ws_eq, min_col=2, min_row=1, max_row=len(df_equity) + 1)
-        cats_ref = Reference(ws_eq, min_col=1, min_row=2, max_row=len(df_equity) + 1)
-        chart.add_data(data_ref, titles_from_data=True)
-        chart.set_categories(cats_ref)
-
-        s1 = chart.series[0]
-        s1.graphicalProperties.line.solidFill = '1F4E78'
-        s1.graphicalProperties.line.width = 25000
-        s1.smooth = False
-
-        from openpyxl.chart.layout import Layout, ManualLayout
-        chart.layout = Layout(
-            manualLayout=ManualLayout(
-                layoutTarget='inner',
-                xMode='edge', yMode='edge',
-                x=0.09, y=0.12, w=0.89, h=0.68,
-            )
-        )
-        ws_eq.add_chart(chart, 'D2')
-
-        ws_tr = writer.sheets['Trade Log']
-        ws_tr.freeze_panes = 'A2'
-        ws_tr.auto_filter.ref = f"A1:{get_column_letter(len(df_trades.columns))}{len(df_trades)+1}"
-
-        true_fill = PatternFill(start_color='C6EFCE', fill_type='solid')
-        true_font = Font(color='006100')
-        false_fill = PatternFill(start_color='FFC7CE', fill_type='solid')
-        false_font = Font(color='9C0006')
-        thin_border = Border(
-            left=Side(style='thin', color='D4D4D4'), right=Side(style='thin', color='D4D4D4'),
-            top=Side(style='thin', color='D4D4D4'), bottom=Side(style='thin', color='D4D4D4')
-        )
-
-        for cell in ws_tr[1]:
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal='center')
-            cell.border = thin_border
-
-        for row_idx in range(2, len(df_trades) + 2):
-            for col_idx, col_name in enumerate(df_trades.columns, 1):
-                cell = ws_tr.cell(row=row_idx, column=col_idx)
-                cell.border = thin_border
-
-                if 'Date' in col_name:
-                    cell.alignment = Alignment(horizontal='center')
-                    cell.number_format = 'yyyy-mm-dd'
-                elif col_name == 'Profit (INR)':
-                    cell.number_format = '[$₹-en-IN]#,##0.00'
-                elif col_name == 'Return (%)':
-                    cell.number_format = '0.00"%"'
-                elif col_name == 'Win':
-                    cell.alignment = Alignment(horizontal='center')
-                    cell.fill = true_fill if cell.value else false_fill
-                    cell.font = true_font if cell.value else false_font
-
-        for col_idx, col_name in enumerate(df_trades.columns, 1):
-            col_letter = get_column_letter(col_idx)
-            max_len = max(max((len(str(v)) for v in df_trades[col_name]), default=0), len(col_name))
-            ws_tr.column_dimensions[col_letter].width = max_len + 5
-
-        # Dynamic Total & Average Row Implementation
-        last_row = len(df_trades) + 1
-        total_row = last_row + 1
-
-        ws_tr.cell(row=total_row, column=1, value='TOTAL / AVG:').font = Font(bold=True)
-        
-        # 1. Total Profit (Sum)
-        profit_col_idx = df_trades.columns.get_loc('Profit (INR)') + 1
-        profit_col_letter = get_column_letter(profit_col_idx)
-        sum_cell = ws_tr.cell(row=total_row, column=profit_col_idx, value=f'=SUM({profit_col_letter}2:{profit_col_letter}{last_row})')
-        sum_cell.font = Font(bold=True)
-        sum_cell.number_format = '[$₹-en-IN]#,##0.00'
-
-        # 2. Average Return (Average)
-        ret_col_idx = df_trades.columns.get_loc('Return (%)') + 1
-        ret_col_letter = get_column_letter(ret_col_idx)
-        avg_cell = ws_tr.cell(row=total_row, column=ret_col_idx, value=f'=AVERAGE({ret_col_letter}2:{ret_col_letter}{last_row})')
-        avg_cell.font = Font(bold=True)
-        avg_cell.number_format = '0.00"%"'
-
+    write_backtest_report(filename, df_equity, df_trades, df_metrics, df_bench, meta)
     print(f'Professional Backtest Report successfully saved to {filename}')
 
 def get_dynamic_tickers(db_name=RESULTS_DIR / "market_data.db"):

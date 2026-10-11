@@ -58,21 +58,19 @@ Exits trigger on take-profit, stop-loss (both checked on the daily close) or RSI
 
 ## Results (test window, out-of-sample)
 
-Chosen parameters: **Stop-Loss [X]% / Take-Profit [Y]%** (selected on 2024 data only).
+Chosen parameters: **Stop-Loss 0.10% / Take-Profit 0.05%** (selected on 2024 data only).
 
 | Metric | Strategy | Notes |
 | :--- | :--- | :--- |
-| Final Portfolio Value | [fill in] | Starting from ₹1,00,000 |
-| CAGR | [fill in] | |
-| Annualized Volatility | [fill in] | |
-| Sharpe Ratio (Rf = 5%) | [fill in] | |
-| Sortino Ratio | [fill in] | |
-| Max Drawdown | [fill in] | |
-| Profit Factor | [fill in] | Gross profit / gross loss |
-| Strategy Beta | [fill in] | Sensitivity to NIFTYBEES daily moves |
-| Strategy Alpha (annualized) | [fill in] | CAPM alpha, Rf = 5% |
-
-Copy these values from the "Backtest Analytics" tab of the dashboard after your final run, and add one plain sentence on what they show.
+| Final Portfolio Value | ₹105,686.73 | Starting from ₹1,00,000 |
+| CAGR | 5.71% | |
+| Annualized Volatility | 4.16% | |
+| Sharpe Ratio (Rf = 5%) | -2.27% | |
+| Sortino Ratio | 0.17 | |
+| Max Drawdown | 0.26 | |
+| Profit Factor | 2.61 | Gross profit / gross loss |
+| Strategy Beta | 0.18 | Sensitivity to NIFTYBEES daily moves |
+| Strategy Alpha (annualized) | -0.37% | CAPM alpha, Rf = 5% |
 
 ## Limitations
 
@@ -99,6 +97,7 @@ AlgoEdge/
 │   ├── strategy_config.py   # single source of truth: RSI rules, SL/TP, costs, dates, paths
 │   ├── Screeners.py
 │   ├── Backtester.py
+│   ├── Excel_reports.py
 │   ├── Optimeser.py
 │   └── Dashboard.py
 ├── results/                 # market_data.db + .xlsx reports

@@ -5,15 +5,17 @@ import warnings
 
 import pandas as pd
 import yfinance as yf
-from openpyxl.formatting.rule import ColorScaleRule
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from Excel_reports import write_optimization_report
 from strategy_config import (
     COMMISSION_RATE,
+    END_DATE,
     ENTRY_RSI,
     EXIT_RSI,
     RESULTS_DIR,
     RSI_PERIOD,
+    START_DATE,
+    STOP_LOSS_PCT,
+    TAKE_PROFIT_PCT,
     TRAIN_END,
     TRAIN_START,
 )
@@ -100,91 +102,55 @@ def run_single_backtest(raw_data, tickers, stop_loss_pct, take_profit_pct):
 
     return pd.DataFrame(all_trades)
 
+def _span(a, b):
+    """Readable inclusive date range from config strings (END dates are exclusive)."""
+    a, b = pd.Timestamp(a), pd.Timestamp(b) - pd.Timedelta(days=1)
+    return f"{a:%d %b %Y} to {b:%d %b %Y}"
+
 def export_advanced_excel(df, filename=RESULTS_DIR / "Optimization.xlsx"):
-    """Exports the optimization results to a professional Excel dashboard with heatmaps."""
-    with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Grid_Search')
-        ws = writer.sheets['Grid_Search']
-        
-        header_font = Font(bold=True, color='FFFFFF')
-        header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
-        thin_border = Border(left=Side(style='thin', color='D4D4D4'), right=Side(style='thin', color='D4D4D4'),
-                             top=Side(style='thin', color='D4D4D4'), bottom=Side(style='thin', color='D4D4D4'))
-
-        # Format Headers
-        for cell in ws[1]:
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal='center')
-            cell.border = thin_border
-
-        # Auto-adjust column widths and format numbers
-        for col_idx, col_name in enumerate(df.columns, 1):
-            col_letter = get_column_letter(col_idx)
-            max_len = max(max((len(str(v)) for v in df[col_name]), default=0), len(col_name))
-            ws.column_dimensions[col_letter].width = max_len + 4
-            
-            for row_idx in range(2, len(df) + 2):
-                cell = ws.cell(row=row_idx, column=col_idx)
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal='center')
-                
-                if '%' in col_name and col_name not in ['Stop Loss', 'Take Profit']:
-                    cell.number_format = '0.00"%"'
-                elif col_name == 'Profit Factor':
-                    cell.number_format = '0.00'
-
-        # Apply Heatmap Color Scales (Green for good, Red for bad)
-        last_row = len(df) + 1
-        green_red_scale = ColorScaleRule(start_type='min', start_color='FFC7CE',
-                                         mid_type='percentile', mid_value=50, mid_color='FFE699',
-                                         end_type='max', end_color='C6EFCE')
-        
-        # Apply heatmaps to Win Rate, Profit Factor, and Total Return
-        win_col = get_column_letter(df.columns.get_loc('Win Rate (%)') + 1)
-        pf_col = get_column_letter(df.columns.get_loc('Profit Factor') + 1)
-        ret_col = get_column_letter(df.columns.get_loc('Sum of Trade Returns (%)') + 1)
-        
-        ws.conditional_formatting.add(f"{win_col}2:{win_col}{last_row}", green_red_scale)
-        ws.conditional_formatting.add(f"{pf_col}2:{pf_col}{last_row}", green_red_scale)
-        ws.conditional_formatting.add(f"{ret_col}2:{ret_col}{last_row}", green_red_scale)
-
+    """Exports the grid-search results (dashboard-style sheets live in Excel_reports.py)."""
+    meta = {
+        'sl_label': f"{STOP_LOSS_PCT * 100:.0f}%",
+        'tp_label': f"{TAKE_PROFIT_PCT * 100:.0f}%",
+        'train_window': _span(TRAIN_START, TRAIN_END),
+        'test_window': _span(START_DATE, END_DATE),
+    }
+    write_optimization_report(filename, df, meta)
     print(f"\nProfessional Heatmap saved to {filename}")
 
 def run_optimizer():
     tickers = get_dynamic_tickers()
-    
+
     stop_losses = [0.03, 0.05, 0.07, 0.10]
     take_profits = [0.05, 0.08, 0.12, 0.15]
     parameter_combinations = list(itertools.product(stop_losses, take_profits))
-    
+
+    # Walk-forward: the search only sees the TRAINING window; the backtester tests the chosen pair later.
     print(f"Downloading {TRAIN_START} to {TRAIN_END} data for {len(tickers)} stocks ONCE...")
     raw_data = yf.download(tickers, start=TRAIN_START, end=TRAIN_END, group_by='ticker', threads=True, progress=False)
-    
     if raw_data.empty:
         raise SystemExit('[ERROR] No price data downloaded. Check your internet connection and run again.')
 
     results_summary = []
     print(f"\nRunning {len(parameter_combinations)} backtest iterations...\n")
-    
+
     for sl, tp in parameter_combinations:
         trades_df = run_single_backtest(raw_data, tickers, stop_loss_pct=sl, take_profit_pct=tp)
-        
+
         if not trades_df.empty:
             total_trades = len(trades_df)
             winning_trades = trades_df[trades_df['Win'] == True]
             losing_trades = trades_df[trades_df['Win'] == False]
-            
+
             win_rate = (len(winning_trades) / total_trades) * 100
             total_return = trades_df['Return (%)'].sum()
-            
-            # New Metrics
+
             avg_win = winning_trades['Return (%)'].mean() if not winning_trades.empty else 0
             avg_loss = losing_trades['Return (%)'].mean() if not losing_trades.empty else 0
             gross_profit = winning_trades['Return (%)'].sum() if not winning_trades.empty else 0
             gross_loss = abs(losing_trades['Return (%)'].sum()) if not losing_trades.empty else 0
-            profit_factor = gross_profit / gross_loss if gross_loss != 0 else float('inf')
-            
+            profit_factor = gross_profit / gross_loss if gross_loss != 0 else float('nan')
+
             results_summary.append({
                 'Stop Loss': f"{sl*100:.0f}%",
                 'Take Profit': f"{tp*100:.0f}%",
@@ -197,12 +163,14 @@ def run_optimizer():
             })
 
     results_df = pd.DataFrame(results_summary)
-    ranked_results = results_df.sort_values(by='Sum of Trade Returns (%)', ascending=False)
-    
+    if results_df.empty:
+        raise SystemExit('[ERROR] No trades were generated in the training window.')
+    ranked_results = results_df.sort_values(
+        by=['Profit Factor', 'Win Rate (%)', 'Sum of Trade Returns (%)'], ascending=False, na_position='last')
+
     print("================ OPTIMIZATION RESULTS RANKED ================")
     print(ranked_results.to_string(index=False))
-    
-    # Generate the new Excel Heatmap
+
     export_advanced_excel(ranked_results)
 
 if __name__ == "__main__":
